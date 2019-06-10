@@ -1,0 +1,8 @@
+__pycache__/
+*.obj
+*.hdf5
+scraps.py
+.ipynb_checkpoints/
+model_outputs/
+y_hats/
+data/

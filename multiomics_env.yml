@@ -1,0 +1,25 @@
+name: multiomics_dl_env
+channels:
+  - soumith
+  - defaults
+  - conda-forge
+  - bioconda
+dependencies:
+  - pytorch=0.3.1
+  - python=3.6
+  - numpy
+  - scipy
+  - tqdm
+  - docopt
+  - pytorch
+  - nltk
+  - torchvision
+  - matplotlib
+  - keras
+  - scikit-learn
+  # - umap-learn
+  - pandas
+  - mofapy
+  - tensorflow
+  - mne
+  - seaborn
