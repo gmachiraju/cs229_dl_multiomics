@@ -36,24 +36,29 @@ from keras import backend as K
 from utils import *
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+# home_dir = "/scratch/users/gmachi/dl_multiomics/cs229_dl_multiomics"
 
 
-# def run_logreg(X_embedded, y, omics_flag):
-#     X_train, X_test, y_train, y_test = train_test_split(
-#         X_embedded, y, test_size=0.2)
-#     if omics_flag == "single":
-#         logreg = LogisticRegression(
-#             random_state=0, solver='lbfgs')
-#     elif omics_flag == "multi":
-#         logreg = LogisticRegression(
-#             random_state=0, solver='lbfgs', multi_class='multinomial')
-#     model = logreg.fit(X_train, y_train)
-#     y_hats = model.predict(X_test)
-#     y_probs = model.predict_proba(X_test)
+# Not yet implemented:
+#---------------------
+# run sparse pca from scikitlearn!
+def run_sparse_pca(X, encoding_dim=10):
+    pass
 
-#     # class imbalance - may need to fix that
-#     # ensure MOFA doesn't futz with ordering of samples... shouldn't...
-#     return y_hats, y_probs, y_test
+
+# run sparse pca from scikitlearn!
+def run_kernel_pca(X, encoding_dim=10):
+    pass
+
+
+# run sparse pca from scikitlearn!
+def run_mds(X, encoding_dim=10):
+    pass
+
+
+# run sparse pca from scikitlearn!
+def run_icluster(X, encoding_dim=10):
+    pass
 
 
 def run_pca(X, encoding_dim=10):
@@ -63,29 +68,11 @@ def run_pca(X, encoding_dim=10):
     return X_loadings, X_embedded
 
 
-# run sparse pca from scikitlearn!
-def run_sparse_pca(X, encoding_dim=10):
-    pass
-
-
 def run_fa(X, encoding_dim=10):
     fa = FactorAnalysis(n_components=encoding_dim, random_state=0)
     X_embedded = fa.fit_transform(X)
     X_loadings = fa.components_
     return X_loadings, X_embedded
-
-# ** needs to be less than/equal to 4 for barnes_hit alg.. The main purpose of t-SNE is visualization of high-dimensional data.
-# def run_tsne(X, encoding_dim=10):
-#     tsne = TSNE(n_components=encoding_dim)
-#     X_embedded = tsne.fit_transform(X)
-#     X_loadings = tsne.embedding_
-#     return X_loadings, X_embedded
-
-# ** conflict!!
-# def run_umap(X, encoding_dim=10):
-#     u_map = UMAP(n_components=encoding_dim)
-#     X_embedded = u_map.fit_transform(X)
-#     return X_embedded
 
 
 # add dropout layer!
@@ -102,8 +89,8 @@ def run_vanilla_autoencoder(X, activation, encoding_dim=10):
 
     # change epochs to 1000 when doing real test
     history = autoencoder.fit(X, X,
-                              epochs=200,
-                              batch_size=16,
+                              epochs=300,
+                              batch_size=50,
                               shuffle=True,
                               validation_split=0.1,
                               verbose=0)
@@ -139,10 +126,10 @@ def run_mofa(X, args, encoding_dim=10):
     a large number of factors (K>25).
     """
 
-    outfile = os.path.dirname(os.path.realpath(
-        __file__)) + "/" + args.dataset + ".hdf5"
+    outfile = home_dir + "/" + args.dataset + ".hdf5"
 
     if args.cached_mfa == False:
+        print("hi, cached mofa")
         # Load the data
         # Be careful to use the right delimiter, and make sure that you use the
         # right arguments from pandas.read_csv to load the row names and column
@@ -277,8 +264,7 @@ def run_mofa(X, args, encoding_dim=10):
         # elbofreq: frequency of computation of the ELBO. It is useful to assess convergence, but it slows down the training.
         # verbose: boolean indicating whether to generate a verbose output.
         # seed: random seed. If None, it is sampled randomly
-        ep.set_train_options(iter=200, tolerance=1.0,
-                             dropR2=0.00, elbofreq=1, verbose=args.verbosity, seed=2019)
+        ep.set_train_options(iter=1000, tolerance=0.1, dropR2=0.00, elbofreq=1, verbose=args.verbosity, seed=2019) # iter used to be 10 for testing
 
         # Define prior distributions
         ep.define_priors()
@@ -347,20 +333,7 @@ def run_mofa(X, args, encoding_dim=10):
     return X_loadings, X_embedded
 
 
-# # needs work... unstable gradients
-# def run_oivae(X, args, encoding_dim=10):
-
-#     # outfile = os.path.dirname(os.path.realpath(__file__)) + "/test_oivae.hdf5"
-#     # ^use above if need to write to binary
-
-#     if not args.cached_oivae:
-
-#         oivae = OivaeOmics(e_size=encoding_dim)
-#         X_embedded = oivae.fit_transform(X)
-#         return X_embedded
-
-
-def run_maui(X, args, encoding_dim=10, hidden_dim=10, epochs=200):
+def run_maui(X, args, encoding_dim=30, hidden_dim=1100, epochs=300): # epochs used to be 5 for testing
 
     if args.cached_vae == False:
 
@@ -383,11 +356,9 @@ def run_maui(X, args, encoding_dim=10, hidden_dim=10, epochs=200):
             cnv = X.loc[:, X.columns.str.startswith('cnv')].T
 
         # set 1 cpu core
-        K.set_session(K.tf.Session(config=K.tf.ConfigProto(
-            intra_op_parallelism_threads=1, inter_op_parallelism_threads=1)))
+        K.set_session(K.tf.Session(config=K.tf.ConfigProto(intra_op_parallelism_threads=1, inter_op_parallelism_threads=1)))
 
-        maui_model = maui.Maui(
-            n_hidden=[hidden_dim], n_latent=encoding_dim, epochs=epochs)  # n_hidden used to be 1100
+        maui_model = maui.Maui(n_hidden=[hidden_dim], n_latent=encoding_dim, epochs=epochs, batch_size=50)  # n_hidden used to be hidden_dim=10, 1100
 
         if args.dataset == "ipop":
             X_embedded = maui_model.fit_transform(
@@ -408,16 +379,62 @@ def run_maui(X, args, encoding_dim=10, hidden_dim=10, epochs=200):
         # maui_model.hist.plot()
 
         # X_embedded = np.matmul(X_loadings, X)
-        d = args.dataset
+        d = home_dir + "/" + args.dataset
         serialize(X_loadings, d + '_maui_loadings.obj')
         serialize(X_embedded, d + '_maui_transformed.obj')
 
         return X_loadings, X_embedded
 
     else:
-        d = args.dataset
+        d = home_dir + "/" + args.dataset
 
         # X_embedded = np.matmul(X_loadings, X)
         X_loadings = deserialize(d + '_maui_loadings.obj')
         X_embedded = deserialize(d + '_maui_transformed.obj')
         return X_loadings, X_embedded
+
+
+    
+# # needs work... unstable gradients
+# def run_oivae(X, args, encoding_dim=10):
+
+#     # outfile = os.path.dirname(os.path.realpath(__file__)) + "/test_oivae.hdf5"
+#     # ^use above if need to write to binary
+
+#     if not args.cached_oivae:
+
+#         oivae = OivaeOmics(e_size=encoding_dim)
+#         X_embedded = oivae.fit_transform(X)
+#         return X_embedded
+
+
+# def run_logreg(X_embedded, y, omics_flag):
+#     X_train, X_test, y_train, y_test = train_test_split(
+#         X_embedded, y, test_size=0.2)
+#     if omics_flag == "single":
+#         logreg = LogisticRegression(
+#             random_state=0, solver='lbfgs')
+#     elif omics_flag == "multi":
+#         logreg = LogisticRegression(
+#             random_state=0, solver='lbfgs', multi_class='multinomial')
+#     model = logreg.fit(X_train, y_train)
+#     y_hats = model.predict(X_test)
+#     y_probs = model.predict_proba(X_test)
+
+#     # class imbalance - may need to fix that
+#     # ensure MOFA doesn't futz with ordering of samples... shouldn't...
+#     return y_hats, y_probs, y_test
+
+
+# ** needs to be less than/equal to 4 for barnes_hit alg.. The main purpose of t-SNE is visualization of high-dimensional data.
+# def run_tsne(X, encoding_dim=10):
+#     tsne = TSNE(n_components=encoding_dim)
+#     X_embedded = tsne.fit_transform(X)
+#     X_loadings = tsne.embedding_
+#     return X_loadings, X_embedded
+
+# ** conflict!!
+# def run_umap(X, encoding_dim=10):
+#     u_map = UMAP(n_components=encoding_dim)
+#     X_embedded = u_map.fit_transform(X)
+#     return X_embedded

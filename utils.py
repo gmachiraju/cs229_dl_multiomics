@@ -20,6 +20,8 @@ import argparse
 from scipy import stats
 from scipy import interp
 
+home_dir = "/scratch/users/gmachi/dl_multiomics/cs229_dl_multiomics"
+
 
 label_map1 = {'harvest_1': 'H',
               'harvest_2': "H",
