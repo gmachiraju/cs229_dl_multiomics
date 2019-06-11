@@ -1,0 +1,288 @@
+---
+title: "Multi-omics factorization benchmarking illustrates the added value of deep learning"
+output:
+  pdf_document: default
+  html_notebook: default
+---
+
+# Motivation
+
+We are increasingly seeing multi-omics datasets emerging as a tool for basic biological research, with translational applications to provide potential biomarkers for disease states. An assumption of multi-omics studies is that the measured molecules are systemically interacting with one another in a complex inter-omic network, and that a patient observation can serve as a rich snapshot of disease state. However, there exist many challenges to integrating these data for downstream analyses (patient subgrouping, survival analysis, etc.), particularly due to feature-feature nonlinearities and their collective heterogeneity, noise, and high-dimensionality. Naturally, multi-omics integration, usually taking the form of unsupervised projection methods, is a growing area of methods development with recent advances group factor and neural approaches. Through our investigation, we show that state-of-the-art linear methods such as Multi-Omics Factor Analysis (MOFA) present issues with dominating omics signals in projected data, motivating nonlinear approaches for group factor analysis. In this talk, I present a series of experiments with Variational Autoencoders against multiple baselines performing on multi-omic datasets, analyzing the meaning of their latent features and any detected biomarkers of interest. Finally, I plan to discuss future aims to extend these methods to the time-domain.
+
+# Tested methods
+
+## General factorization methods
+
+### PCA
+
+### Autoencoders
+
+### Factor analysis
+
+## Specialized multiomics methods
+
+### MOFA
+
+### MAUI
+
+# Useful code
+
+```{r,results='hide',message=FALSE}
+library(corrplot);library(gplots);library(data.table)
+library(lme4);library(lmerTest)
+# Helper functions
+get_top_loading_types<-function(x,types,topx,minval=0){
+  x = abs(x)
+  x = x[x>minval]
+  n = min(topx,length(x))
+  x = sort(x,decreasing = T)[1:n]
+  xt = types[names(x)]
+  return(xt)
+}
+read_loadings<-function(allfiles,features){
+  loadings = list()
+  for(method in names(allfiles)){
+    loadings[[method]] = t(fread(allfiles[method],sep = ",",data.table = F))
+    loadings[[method]] = loadings[[method]][,-1] # remove the first row (==row number)
+    if(nrow(loadings[[method]])>length(features)){
+      loadings[[method]] = loadings[[method]][-1,]
+    }
+    colnames(loadings[[method]]) = paste(method,1:ncol(loadings[[method]] ),sep="_")
+    rownames(loadings[[method]]) = features
+  }
+  return(loadings)
+}
+named_table<-function(x,ns){
+  tt = table(x)
+  tt[setdiff(ns,names(tt))]=0
+  tt = tt[ns]
+  return(tt)
+}
+read_transformed_data<-function(sample_w_path){
+  sample_w_files = list.files(sample_w_path)
+  ns = sapply(sample_w_files,function(x)strsplit(x,split="_")[[1]][1])
+  sample_w_files = paste(sample_w_path,sample_w_files,sep="")
+  names(sample_w_files) = ns
+  Ts = list()
+  for(nn in ns){
+    Ts[[nn]] = read.csv(sample_w_files[[nn]])
+    colnames(Ts[[nn]]) = paste(nn,1:ncol(Ts[[nn]]),sep="")
+  }
+  return(Ts)
+}
+get_corr_matrix<-function(l,num_components,...){
+  m = l[[1]][,1:num_components]
+  for(i in 2:length(l)){
+    m = cbind(m,l[[i]][,1:num_components])
+  }
+  # Compute correlations
+  corrs = cor(m,...)
+  return(corrs)
+}
+analyze_factor<-function(x,sample_meta,time_poly_degree=5){
+  df = data.frame(x=x,sample_meta)
+  try({
+    lmer_model = lmer(x~label+poly(time,degree = 1:time_poly_degree)+
+                        (1|subject),data=df)
+    an = anova(lmer_model)
+    pvalues = an$`Pr(>F)`
+    names(pvalues)=rownames(an)
+    return(pvalues)
+  })
+  return(c(1,1))
+}
+analyze_factor_label_wo_time<-function(x,sample_meta,time_poly_degree=5){
+  df = data.frame(x=x,sample_meta)
+  if(all(table(sample_meta$subject)==1)){
+    lm_model = summary(lm(x~label,data=df))
+    return(lm_model$coefficients[-1,"Pr(>|t|)"])
+  }
+  try({
+    lmer_model = lmer(x~label+(1|subject),data=df)
+    an = anova(lmer_model)
+    pvalues = an$`Pr(>F)`
+    names(pvalues)=rownames(an)
+    return(pvalues)
+  })
+  return(c(1,1))
+}
+factorization_comparison<-function(loadings_path,num_components=5,
+                                   top_features_for_mixing=1000,features,
+                                   sample_meta,sample_w_path,
+                                   factor_eval_function = analyze_factor,...){
+  setwd(loadings_path)
+  # analyze all txt loadings files in working dir
+  allfiles = list.files(".")
+  allfiles = allfiles[grepl("loadings",allfiles)]
+  names(allfiles) = gsub("_loadings.txt","",allfiles)
+  
+  # Get the factor loadings
+  loadings = read_loadings(allfiles,features)
+  if(!all(sapply(loadings,dim) == dim(loadings[[1]]))){
+    print("Error, not all loading matrices have the same dim, stopping")
+  }
+  # Get the transformed data
+  Ts = read_transformed_data(sample_w_path)
+  if(!all(sapply(Ts,dim) == dim(Ts[[1]]))){
+    print("Error, not all transformed data matrices have the same dim, stopping")
+  }
+  
+  # Check the "mixing" levels of the methods
+  method2analyte_types = lapply(loadings, function(x)apply(x[,1:10],2,
+      get_top_loading_types,types=feature_type,
+      topx=top_features_for_mixing,minval=1e-05))
+  mixing_tables = lapply(method2analyte_types,
+                         function(x)apply(x,2,named_table,ns=unique(feature_type)))
+  
+  # Compute correlations
+  # Among the loadings
+  corrs = get_corr_matrix(loadings,num_components,method="spearman")
+  xcorrs = abs(corrs)>0.2;mode(xcorrs) = "numeric"
+  # Among the transformed factors
+  corrs_t = get_corr_matrix(Ts,num_components,method="spearman")
+  xcorrs_t = abs(corrs_t)>0.2;mode(xcorrs_t) = "numeric"
+  
+  cat("Correlation among the loadings of the methods
+      (i.e., correlation of the analyte socres):")
+  corrplot(corrs,order="hclust",mar = c(1,2,1,1),tl.cex = 0.8)
+  cat("Correlation among the transformed factors
+        (i.e., correlation of the sample socres):")
+  corrplot(corrs_t,order="hclust",mar = c(1,2,1,1),tl.cex = 0.8)
+  #corrplot(xcorrs,order="hclust",mar = c(1,2,1,1))
+  #corrplot(xcorrs_t,order="hclust",mar = c(1,2,1,1))
+  
+  par(mfrow=c(2,2),mar=c(3,3,3,2))
+  cat(paste("Mixing level - we count the analyte type representation
+            among the top weight analytes (",top_features_for_mixing, 
+            " in this case)",sep=""))
+  barplot(mixing_tables$pca,
+          beside = T,legend=T,args.legend = list(x="top","ncol"=3,cex=0.8),ylim=c(0,1400),
+          main="PCA",names=1:ncol(method2analyte_types[[1]]))
+  barplot(mixing_tables$mfa,
+          beside = T,legend=T,args.legend = list(x="top","ncol"=3,cex=0.8),ylim=c(0,1400),
+          main="MOFA",names=1:ncol(method2analyte_types[[1]]))
+  barplot(mixing_tables$maui,
+          beside = T,legend=T,args.legend = list(x="top","ncol"=3,cex=0.8),ylim=c(0,1400),
+          main="MAUI",names=1:ncol(method2analyte_types[[1]]))
+  barplot(mixing_tables$aer,
+          beside = T,legend=T,args.legend = list(x="top","ncol"=3,cex=0.8),ylim=c(0,1400),
+          main="AER",names=1:ncol(method2analyte_types[[1]]))
+  
+  # Load the sample x factor matrices
+  method2pvalues = lapply(Ts,function(x,y)apply(x,2,
+          factor_eval_function,sample_meta=y,...),
+           y=sample_meta)
+  method2num_corr_factors = sapply(method2pvalues,function(x)rowSums(x<0.05))
+  maxval = max(method2num_corr_factors)
+  cat("LMM analysis, computing the association between 
+      the transformed data axes and sample label and time (if available),
+      number of components with p<0.05:")
+  barplot(method2num_corr_factors,beside=T,legend=T,args.legend = list(x="top",cex=0.8),
+          ylim = c(0,maxval*1.5))
+}
+```
+
+# The iPOP dataset
+
+## Dataset description
+
+## Factorization results
+
+```{r,fig.align="center",out.height='60%',out.width='60%'}
+options(warn = -1)
+loadings_path = "/Users/David/Desktop/multiomics/factorization/ipop/loadings_20/"
+setwd(loadings_path)
+features = read.delim("../feature_names.txt",stringsAsFactors = F)[,1]
+# load the feature names and types
+features = features[!is.na(features)]
+feature_type = sapply(features,function(x)strsplit(x,split="\\.")[[1]][1])
+table(feature_type)
+sample_meta = read.csv("../all.txt",stringsAsFactors = F,header=F)
+colnames(sample_meta) = c("time","label","subject")
+sample_w_path = "../transformed_20/"
+# For looking at correlations with the metadata we need to process the metadata
+dates  = sapply(sample_meta[,1],function(x)strsplit(x,split = " ")[[1]][1])
+dates = as.Date(dates,format = "%m/%d/%Y")
+sample_meta = sample_meta[order(sample_meta[,"subject"],dates),]
+dates  = sapply(sample_meta[,1],function(x)strsplit(x,split = " ")[[1]][1])
+dates = as.Date(dates,format = "%m/%d/%Y")
+ltmp = grepl("infection",sample_meta[,"label"],ignore.case = T)
+sample_meta[!ltmp,"label"] = "Healthy"
+sample_meta[ltmp,"label"] = "Infection"
+sample_meta[,"subject"] = sapply(sample_meta[,"subject"],
+  function(x)paste(strsplit(x,split="-")[[1]][1:2],collapse="-"))
+newt = rep(0,length(dates))
+for(ss in unique(sample_meta[,"subject"])){
+  inds = which(sample_meta[,"subject"] == ss)
+  curr_l = sample_meta[inds,"label"]
+  curr_t = dates[inds]
+  for(i in 1:length(inds)){
+    if(curr_l[i]!="Healthy"){next}
+    last_inf = max(which(grepl("infection",curr_l[1:i],ignore.case = T)))
+    if(is.infinite(last_inf)){next}
+    curr_diff = as.numeric(dates[inds[i]]-dates[inds[last_inf]])
+    newt[inds[i]] = curr_diff
+  }
+}
+sample_meta[,"time"] = newt
+sample_meta = data.frame(sample_meta)
+factorization_comparison(loadings_path,num_components=5,
+                         top_features_for_mixing=1000,features,
+                         sample_meta,sample_w_path,time_poly_degree=3)
+```
+
+# The Arabidopsis dataset
+
+## Dataset description
+
+## Factorization results
+
+
+```{r,fig.align="center",out.height='60%',out.width='60%'}
+# AT
+loadings_path = "/Users/David/Desktop/multiomics/factorization/at/loadings_10-2/"
+setwd(loadings_path)
+features = read.delim("../feature_names.txt",stringsAsFactors = F)[,1]
+# load the feature names and types
+features = features[!is.na(features)]
+feature_type = sapply(features,function(x)strsplit(x,split="_")[[1]][1])
+table(feature_type)
+sample_meta = read.csv("../all.txt",stringsAsFactors = F,header=F)
+subject = sapply(sample_meta[,3],function(x)strsplit(x,split="_")[[1]][2])
+sample_meta = cbind(sample_meta,subject)
+colnames(sample_meta) = c("time","label","sample","subject")
+sample_meta = data.frame(sample_meta)
+sample_meta$time = as.numeric(gsub("h","",sample_meta$time))
+sample_w_path = "../transformed_10-2/"
+factorization_comparison(loadings_path,num_components=5,
+                         top_features_for_mixing=1000,features,
+                         sample_meta,sample_w_path,time_poly_degree=3)
+
+```
+
+# The TCGA dataset
+
+## Dataset description
+
+## Factorization results
+
+```{r,fig.align="center",out.height='60%',out.width='60%'}
+# TCGA
+loadings_path = "/Users/David/Desktop/multiomics/factorization/tcga/loadings_30/"
+setwd(loadings_path)
+features = read.delim("../feature_names.txt",stringsAsFactors = F)[,1]
+# load the feature names and types
+features = features[!is.na(features)]
+feature_type = sapply(features,function(x)strsplit(x,split="_")[[1]][1])
+table(feature_type)
+sample_meta = read.csv("../all.txt",stringsAsFactors = F,header=F)
+colnames(sample_meta) = c("label1","label","subject")
+sample_meta = data.frame(sample_meta)
+sample_meta$time = as.numeric(rep(1,nrow(sample_meta)))
+sample_w_path = "../transformed_30/"
+factorization_comparison(loadings_path,num_components=5,
+                         factor_eval_function = analyze_factor_label_wo_time,
+                         top_features_for_mixing=1000,features,
+                         sample_meta,sample_w_path)
+```
+
